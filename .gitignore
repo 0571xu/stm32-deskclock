@@ -1,0 +1,37 @@
+# Keil 编译产物
+Listing/
+Objects/
+USER/Output/
+*.o
+*.axf
+*.hex
+*.bin
+*.map
+*.lst
+*.crf
+*.d
+*.dep
+*.lnp
+*.plg
+*.htm
+*.tra
+*.build_log.htm
+*.iex
+*.__i
+*._ia
+*.saved_uv4
+
+# Keil 用户配置
+*.uvguix.*
+*.uvopt.*
+*.uvproj.*
+*.bak
+*.scvd
+
+# 调试日志
+JLinkLog.txt
+JLinkSettings.ini
+*.log
+
+# VSCode
+.vscode/
