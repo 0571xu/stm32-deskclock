@@ -125,11 +125,6 @@ void wifi_send_task(void *pvParameters)
 	// uint8_t buf[100];
     uint32_t notifyValue;
 
-    // uart1_send_at("AT+CIPSTATUS");//检查连接状态,首次连接重试直到成功
-    // while(wait_connect_response(3000) != 3)
-    // {
-    //     connect_init(wait_connect_response(3000));
-    // }
     connect_init(0);
 
 	while(1)
@@ -137,11 +132,26 @@ void wifi_send_task(void *pvParameters)
 		// Receive = xStreamBufferReceive(uartStreamBuffer, buf, sizeof(buf), portMAX_DELAY); // 从 StreamBuffer 中接收数据
         if(xTaskNotifyWait(0, 0, &notifyValue, portMAX_DELAY) == pdTRUE)
         {
-            Data_pack(send_data);
-            uart1_send_bytes(send_buf, 10);
-            send_data.get_time = 0; // 发送后重置时间更新标志
-            send_data.area_index = 0; // 发送后重置地区索引
-
+            if(notifyValue == 0x01)
+            {
+                Data_pack(send_data);
+                uart1_send_bytes(send_buf, 10);
+                send_data.get_time = 0; // 发送后重置时间更新标志
+                send_data.area_index = 0; // 发送后重置地区索引
+            }
+            else if(notifyValue == 0x02)
+            {
+                // 发送心跳
+                send_data.get_time = 1;
+                Data_pack(send_data);
+                uart1_send_bytes(send_buf, 10);
+                send_data.get_time = 0; // 发送后重置时间更新标志
+            }
+            else if(notifyValue == 0x03)
+            {
+                // 检测连接状态
+                connect_init(0);
+            }
 		}
         vTaskDelay(pdMS_TO_TICKS(10));
 	}
@@ -303,7 +313,7 @@ int wait_response(const char *expect, uint32_t timeout_ms)
         {
             if (strstr(line, expect) != NULL)   return 1;
             if (strstr(line, "ERROR") != NULL ||
-                strstr(line, "FAIL")  != NULL)  return -1;
+                strstr(line, "FAIL")  != NULL)  return 0;
         }
     }
     return 0;
@@ -331,8 +341,19 @@ int wait_connect_response(uint32_t timeout_ms)
                 if (st == '3') return 3;
                 if (st == '1' || st == '5') return 1;
                 if (st == '2' || st == '4') return 2;
-                uart1_send_bytes(&st, 1);
             }
+            if(p == NULL)
+            {
+                p = strstr(line, "STATUS:");
+                if (p && strlen(p) > 7)
+                {
+                    char st = p[7];
+                    if (st == '3') return 3;
+                    if (st == '1' || st == '5') return 1;
+                    if (st == '2' || st == '4') return 2;
+                }
+            }
+
             if (strstr(line, "ERROR") || strstr(line, "FAIL"))
                 return -1;
         }
@@ -393,39 +414,39 @@ void connect_init(int status)
         if (i == 0)
         {
             uart1_send_at("ATE0");
-            wait_response("OK", 1500);
+            while(wait_response("OK", 1500));
 
             uart1_send_at("AT+UART=115200,8,1,0,1");
-            wait_response("OK", 1500);
+            while(wait_response("OK", 1500));
 
             uart1_send_at("AT+CWMODE=1");
-            wait_response("OK", 1500);
+            while(wait_response("OK", 1500));
             i++;
         }
 
         if (i == 1)
         {
             uart1_send_at("AT+CWJAP=\"TP-LINK_3372\",\"12345678\"");
-            wait_response("OK", 5000);   // 连 WiFi 慢，超时给大点
+            while(wait_response("OK", 5000));   // 连 WiFi 慢，超时给大点
             i++;
         }
 
         if (i == 2)
         {
             uart1_send_at("AT+CIPSTART=\"TCP\",\"192.168.1.103\",7755");
-            wait_response("OK", 3000);
+            while(wait_response("OK", 3000));//
             i++;
         }
-
-//        uart1_send_at("AT+CIPSTATUS");
-//        i = wait_connect_response(3000);
+        // uart1_send_at("AT+CIPSTATUS");
+        // i = wait_connect_response(3000);
+        // vTaskDelay(pdMS_TO_TICKS(1500));
         retry++;
     }
     /* ---------- 3. 进入透传 ---------- */
     uart1_send_at("AT+CIPMODE=1");
-    wait_response("OK", 1500);
+    while(wait_response("OK", 1500));
 
     uart1_send_at("AT+CIPSEND");
-    wait_response(">", 1500);
+    while(wait_response(">", 1500));
 }
 

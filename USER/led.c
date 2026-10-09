@@ -25,15 +25,14 @@ void LED_GPIO_Config(void)
   GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
   GPIO_Init(GPIOC, &GPIO_InitStructure);
 
-  // GPIO_InitTypeDef GPIO_InitStructure2;
-  // GPIO_InitStructure2.GPIO_Pin = GPIO_Pin_1;
-  // GPIO_InitStructure2.GPIO_Mode = GPIO_Mode_Out_PP;
-  // GPIO_InitStructure2.GPIO_Speed = GPIO_Speed_50MHz;
-  // GPIO_Init(GPIOA, &GPIO_InitStructure2);
+  GPIO_InitTypeDef GPIO_InitStructure2;             //蜂鸣器初始化
+  GPIO_InitStructure2.GPIO_Pin = GPIO_Pin_6;
+  GPIO_InitStructure2.GPIO_Mode = GPIO_Mode_Out_PP;
+  GPIO_InitStructure2.GPIO_Speed = GPIO_Speed_50MHz;
+  GPIO_Init(GPIOA, &GPIO_InitStructure2);
 
   GPIO_SetBits(GPIOC, GPIO_Pin_13 );	 // 关闭所有LED
-  // GPIO_SetBits(GPIOA, GPIO_Pin_1 );	 // 关闭所有LED
+  GPIO_SetBits(GPIOA, GPIO_Pin_6 );	 // 关闭所有LED
 }
-
 
 

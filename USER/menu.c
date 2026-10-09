@@ -228,16 +228,208 @@ void main_window_render(void)
 
 }
 
+/* ================= 闹钟页 ================= */
+#define TIMESET_LONG_PRESS_MS   800   // 长按判定阈值(确认/删除)
+#define TIMESET_REPEAT_START_MS 300   // 长按连发起始间隔
+#define TIMESET_REPEAT_MIN_MS   60    // 长按连发最快间隔
+
+// 全局只有一个闹钟
+static uint8_t alarm_hour = 0;
+static uint8_t alarm_min  = 0;
+static uint8_t alarm_set  = 0;
+
+// 调节 时/分(field 0=时 1=分)，按 时:分 滚动进位(满60进位，24小时循环)
+// 不涉及日期/月份
+static void alarm_adjust(uint8_t *hh, uint8_t *mm, uint8_t field, int delta)
+{
+    int32_t step  = (field == 0) ? 60 : 1;      // 时=60分, 分=1分
+    int32_t total = (int32_t)(*hh) * 60 + (int32_t)(*mm);
+    int32_t v = total + step * delta;
+
+    v %= 1440;
+    if (v < 0) v += 1440;
+
+    *hh = (uint8_t)(v / 60);
+    *mm = (uint8_t)(v % 60);
+}
+
+// 渲染添加闹钟页，选中字段下方画下划线
+static void alarm_add_render(uint8_t hh, uint8_t mm, uint8_t field)
+{
+    char buf[8];
+    sprintf(buf, "%02d:%02d", hh, mm);
+
+    OLED_Clear();
+    OLED_ShowString(0, 0, (u8*)"Alarm Add", 12);
+    OLED_ShowString(34, 28, (u8*)buf, 24);
+
+    uint8_t x = 34;                 // 时
+    if (field == 1) x = 70;         // 分
+    OLED_DrawLine(x, 54, (uint8_t)(x + 23), 54);
+
+    OLED_Refresh();
+}
+
+// 首次调节一次，若按键仍按住则连发并逐渐加速
+static void alarm_repeat_change(uint8_t *hh, uint8_t *mm, uint8_t field, int delta, uint8_t key_id)
+{
+    uint32_t delay = TIMESET_REPEAT_START_MS;
+
+    alarm_adjust(hh, mm, field, delta);
+    alarm_add_render(*hh, *mm, field);
+
+    while ((key_id == 0) ? (KEY0 == 0) : (KEY1 == 0))
+    {
+        vTaskDelay(pdMS_TO_TICKS(delay));
+        if (!((key_id == 0) ? (KEY0 == 0) : (KEY1 == 0)))
+            break;
+        alarm_adjust(hh, mm, field, delta);
+        alarm_add_render(*hh, *mm, field);
+        delay = delay * 6 / 10;                 // 每次加速
+        if (delay < TIMESET_REPEAT_MIN_MS) delay = TIMESET_REPEAT_MIN_MS;
+    }
+}
+
+// 把闹钟设到下一个 hour:min 时刻(直接用计数器推进，不做日期/月份运算)
+static void alarm_program(uint8_t hour, uint8_t min)
+{
+    uint32_t now    = RTC_GetCounter();
+    uint32_t nowsec = now % 86400;
+    uint32_t target = (uint32_t)hour * 3600 + (uint32_t)min * 60;
+    uint32_t delta  = (target > nowsec) ? (target - nowsec)
+                                        : (target + 86400 - nowsec);
+
+    RCC_APB1PeriphClockCmd(RCC_APB1Periph_PWR | RCC_APB1Periph_BKP, ENABLE);
+    PWR_BackupAccessCmd(ENABLE);
+    RTC_SetAlarm(now + delta);
+    RTC_WaitForLastTask();
+    RTC_ITConfig(RTC_IT_ALR, ENABLE);
+    RTC_WaitForLastTask();
+}
+
+// 删除闹钟：关闭闹钟中断并清标志
+static void alarm_clear(void)
+{
+    RCC_APB1PeriphClockCmd(RCC_APB1Periph_PWR | RCC_APB1Periph_BKP, ENABLE);
+    PWR_BackupAccessCmd(ENABLE);
+    RTC_ITConfig(RTC_IT_ALR, DISABLE);
+    RTC_ClearITPendingBit(RTC_IT_ALR);
+    RTC_WaitForLastTask();
+    alarm_set = 0;
+}
+
 void alarm_add_page(void)
 {
-    // Implementation for alarm add page
-    main_window_render();  // For now, just render the main window
+    uint8_t hh = alarm_set ? alarm_hour : calendar.hour;
+    uint8_t mm = alarm_set ? alarm_min  : calendar.min;
+    uint8_t field = 0;      // 0=时 1=分
+    key_event_t evt;
+
+    alarm_add_render(hh, mm, field);
+
+    while (1)
+    {
+        if (xQueueReceive(xQueueKey, &evt, portMAX_DELAY) != pdTRUE)
+            continue;
+
+        switch (evt)
+        {
+        case KEY_UP:
+            alarm_repeat_change(&hh, &mm, field, +1, 0);
+            break;
+
+        case KEY_DOWN:
+            alarm_repeat_change(&hh, &mm, field, -1, 1);
+            break;
+
+        case KEY_OK:
+        {
+            // 区分短按(切换字段)与长按(确认设置)
+            TickType_t t0 = xTaskGetTickCount();
+            while (KEY2 == 0)
+            {
+                vTaskDelay(pdMS_TO_TICKS(10));
+                if ((xTaskGetTickCount() - t0) >= pdMS_TO_TICKS(TIMESET_LONG_PRESS_MS))
+                    break;
+            }
+
+            if ((xTaskGetTickCount() - t0) >= pdMS_TO_TICKS(TIMESET_LONG_PRESS_MS))
+            {
+                // 长按：设置闹钟并退出
+                alarm_hour = hh;
+                alarm_min  = mm;
+                alarm_set  = 1;
+                alarm_program(hh, mm);
+                return;
+            }
+            else
+            {
+                // 短按：时<->分 切换，等按键释放
+                while (KEY2 == 0) vTaskDelay(pdMS_TO_TICKS(10));
+                field = (uint8_t)((field + 1) % 2);
+                alarm_add_render(hh, mm, field);
+            }
+            break;
+        }
+
+        case KEY_BACK:
+            return;     // 取消，不保存
+
+        default:
+            break;
+        }
+    }
 }
 
 void alarm_delete_page(void)
 {
-    // Implementation for alarm delete page
-    main_window_render();  // For now, just render the main window
+    key_event_t evt;
+    char buf[20];
+
+    OLED_Clear();
+    OLED_ShowString(0, 0, (u8*)"Delete Alarm", 12);
+    if (alarm_set)
+        sprintf(buf, "Alarm %02d:%02d", alarm_hour, alarm_min);
+    else
+        sprintf(buf, "No Alarm");
+    OLED_ShowString(0, 24, (u8*)buf, 12);
+    OLED_ShowString(0, 44, (u8*)"Hold OK to del", 12);
+    OLED_Refresh();
+
+    while (1)
+    {
+        if (xQueueReceive(xQueueKey, &evt, portMAX_DELAY) != pdTRUE)
+            continue;
+
+        switch (evt)
+        {
+        case KEY_OK:
+        {
+            // 长按 OK 删除闹钟
+            TickType_t t0 = xTaskGetTickCount();
+            while (KEY2 == 0)
+            {
+                vTaskDelay(pdMS_TO_TICKS(10));
+                if ((xTaskGetTickCount() - t0) >= pdMS_TO_TICKS(TIMESET_LONG_PRESS_MS))
+                    break;
+            }
+
+            if ((xTaskGetTickCount() - t0) >= pdMS_TO_TICKS(TIMESET_LONG_PRESS_MS))
+            {
+                while (KEY2 == 0) vTaskDelay(pdMS_TO_TICKS(10));
+                alarm_clear();
+                return;     // 返回闹钟菜单
+            }
+            break;
+        }
+
+        case KEY_BACK:
+            return;     // 取消返回
+
+        default:
+            break;
+        }
+    }
 }
 
 void alarm_enable_page(void)
@@ -252,10 +444,128 @@ void alarm_disable_page(void)
     main_window_render();  // For now, just render the main window
 }
 
+/* ================= 设置时间页 ================= */
+// 长按/连发参数(TIMESET_LONG_PRESS_MS 等)见上方“闹钟页”处的宏定义
+
+// 调节当前字段：field 0=时 1=分 2=秒
+// 按当前字段步长(时=3600s, 分=60s, 秒=1s)加减，并做 时:分:秒 滚动进位/借位
+// (满 60 向上进位，减到 0 向下借位，24 小时循环)
+static void timeset_adjust(uint8_t *hh, uint8_t *mm, uint8_t *ss, uint8_t field, int delta)
+{
+    int32_t step  = (field == 0) ? 3600 : ((field == 1) ? 60 : 1);
+    int32_t total = (int32_t)(*hh) * 3600 + (int32_t)(*mm) * 60 + (int32_t)(*ss);
+    int32_t v = total + step * delta;
+
+    v %= 86400;
+    if (v < 0) v += 86400;
+
+    *hh = (uint8_t)(v / 3600);
+    *mm = (uint8_t)((v % 3600) / 60);
+    *ss = (uint8_t)(v % 60);
+}
+
+// 渲染设置页，选中字段下方画下划线
+static void timeset_render(uint8_t hh, uint8_t mm, uint8_t ss, uint8_t field)
+{
+    char buf[12];
+    sprintf(buf, "%02d:%02d:%02d", hh, mm, ss);
+
+    OLED_Clear();
+    OLED_ShowString(0, 0, (u8*)"Time Set", 12);
+    OLED_ShowString(16, 28, (u8*)buf, 24);
+
+    uint8_t x = 16;                     // 时
+    if (field == 1)      x = 52;        // 分
+    else if (field == 2) x = 88;        // 秒
+    OLED_DrawLine(x, 54, (uint8_t)(x + 23), 54);
+
+    OLED_Refresh();
+}
+
+// 首次调节一次，若按键仍按住则连发并逐渐加速
+static void timeset_repeat_change(uint8_t *hh, uint8_t *mm, uint8_t *ss, uint8_t field, int delta, uint8_t key_id)
+{
+    uint32_t delay = TIMESET_REPEAT_START_MS;
+
+    timeset_adjust(hh, mm, ss, field, delta);
+    timeset_render(*hh, *mm, *ss, field);
+
+    while ((key_id == 0) ? (KEY0 == 0) : (KEY1 == 0))
+    {
+        vTaskDelay(pdMS_TO_TICKS(delay));
+        if (!((key_id == 0) ? (KEY0 == 0) : (KEY1 == 0)))
+            break;
+        timeset_adjust(hh, mm, ss, field, delta);
+        timeset_render(*hh, *mm, *ss, field);
+        delay = delay * 6 / 10;                 // 每次加速
+        if (delay < TIMESET_REPEAT_MIN_MS) delay = TIMESET_REPEAT_MIN_MS;
+    }
+}
+
 void time_set_page(void)
 {
-    // Implementation for time set page
-    main_window_render();  // For now, just render the main window
+    uint8_t hh = calendar.hour;
+    uint8_t mm = calendar.min;
+    uint8_t ss = calendar.sec;
+    uint8_t field = 0;      // 0=时 1=分 2=秒
+    key_event_t evt;
+
+    timeset_render(hh, mm, ss, field);
+
+    while (1)
+    {
+        if (xQueueReceive(xQueueKey, &evt, portMAX_DELAY) != pdTRUE)
+            continue;
+
+        switch (evt)
+        {
+        case KEY_UP:
+            timeset_repeat_change(&hh, &mm, &ss, field, +1, 0);
+            break;
+
+        case KEY_DOWN:
+            timeset_repeat_change(&hh, &mm, &ss, field, -1, 1);
+            break;
+
+        case KEY_OK:
+        {
+            // 区分短按(切换字段)与长按(保存退出)
+            TickType_t t0 = xTaskGetTickCount();
+            while (KEY2 == 0)
+            {
+                vTaskDelay(pdMS_TO_TICKS(10));
+                if ((xTaskGetTickCount() - t0) >= pdMS_TO_TICKS(TIMESET_LONG_PRESS_MS))
+                    break;
+            }
+
+            if ((xTaskGetTickCount() - t0) >= pdMS_TO_TICKS(TIMESET_LONG_PRESS_MS))
+            {
+                // 长按：将 时:分:秒 写入 RTC 并退出
+                RTC_EnterConfigMode();
+                RTC_Set(calendar.w_year, calendar.w_month, calendar.w_date, hh, mm, ss);
+                RTC_ExitConfigMode();
+                calendar.hour = hh;
+                calendar.min  = mm;
+                calendar.sec  = ss;
+                return;
+            }
+            else
+            {
+                // 短按：时->分->秒 循环切换，等按键释放
+                while (KEY2 == 0) vTaskDelay(pdMS_TO_TICKS(10));
+                field = (uint8_t)((field + 1) % 3);
+                timeset_render(hh, mm, ss, field);
+            }
+            break;
+        }
+
+        case KEY_BACK:
+            return;     // 取消，不保存
+
+        default:
+            break;
+        }
+    }
 }
 
 void date_set_page(void)
@@ -284,7 +594,7 @@ void send2(void)
 {
     // Implementation for sending area code
     send_data.area_index = 0x02;
-    xTaskNotify(xWifisendTaskHandle, 0x02, eSetValueWithOverwrite);
+    xTaskNotify(xWifisendTaskHandle, 0x01, eSetValueWithOverwrite);
     main_window_render();
 }
 
@@ -292,7 +602,7 @@ void send3(void)
 {
     // Implementation for sending area code
     send_data.area_index = 0x03;
-    xTaskNotify(xWifisendTaskHandle, 0x03, eSetValueWithOverwrite);
+    xTaskNotify(xWifisendTaskHandle, 0x01, eSetValueWithOverwrite);
     main_window_render();
 
 }

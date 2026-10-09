@@ -1,7 +1,10 @@
 #include "delay.h"
 #include "rtc.h" 
+#include "menu.h"
 #include "FreeRTOS.h"
 #include "semphr.h" //信号量相关的头文件
+#include "timers.h"
+
 
 //Mini STM32开发板
 //RTC实时时钟 驱动代码			 
@@ -11,6 +14,9 @@
 SemaphoreHandle_t rtcSemaphore = NULL; //二值信号量句柄
 	   
 _calendar_obj calendar;//时钟结构体 
+
+TimerHandle_t xMyTimer;
+uint8_t timeout_counter = 0;// 计数器，用于心跳检测
  
 static void RTC_NVIC_Config(void)
 {	
@@ -288,6 +294,39 @@ void RTC_PrintTime(void)
     // }
 }
 
+void vMyTimerCallback(TimerHandle_t xTimer)
+{
+    // 这里不要阻塞、不要 vTaskDelay、不要等队列
+    // 只做轻量的事，比如翻转 LED、置个标志
+	// 发信号作为心跳
+	    if(timeout_counter <10)
+	{
+		xTaskNotify(xWifisendTaskHandle, 0x02, eSetValueWithOverwrite);
+		timeout_counter++;
+	}
+	else
+	{
+    	xTaskNotify(xWifisendTaskHandle, 0x03, eSetValueWithOverwrite);
+		timeout_counter = 0;
+	}
+
+}
+
+void timer_init(void)
+{
+    xMyTimer = xTimerCreate(
+        "MyTimer",                       // 名字
+        pdMS_TO_TICKS(1000*60*3),        // 周期 3min
+        pdTRUE,                          // pdTRUE=自动重载（周期），pdFALSE=一次性
+        (void *)0,                       // 定时器 ID
+        vMyTimerCallback                 // 回调
+    );
+
+
+    if (xMyTimer != NULL) {
+        xTimerStart(xMyTimer, 0);        // 启动
+    }
+}
 
 
 

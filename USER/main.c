@@ -49,7 +49,7 @@ int main(void)
     OLED_Init();
     OLED_ColorTurn(0);//0正常显示，1 反色显示
     OLED_DisplayTurn(0);//0正常显示 1 屏幕翻转显示
-    LED_GPIO_Config();
+    LED_GPIO_Config();  //led、蜂鸣器初始化
     KEY_Init();
 
     // ★ 初始化串口（内部会开中断）
@@ -60,6 +60,8 @@ int main(void)
     StreamBuffer_Init(); // 初始化 StreamBuffer
     
     RTC_Init();
+    // 创建定时器
+    timer_init();
 
     xQueueKey = xQueueCreate(10, sizeof(key_event_t));
 
