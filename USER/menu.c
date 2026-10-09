@@ -15,8 +15,8 @@ xQueueHandle xQueueKey;
 
 menu_page_t menu_stack[MENU_STACK_MAX];//菜单栈
 int menu_top = -1;   // 栈顶索引
-send_data_t send_data = {0, 0}; // 新建发送数据结构体并初始化
-area_weather_t area_weather_data = {0, 0, 0, 0, 0};// 新建地区天气数据结构体并初始化
+send_data_t send_data = {0, 3}; // 新建发送数据结构体并初始化
+area_weather_t area_weather_data = {0, 0, 0, 0, 0, NULL};// 新建地区天气数据结构体并初始化
 TaskHandle_t xWifisendTaskHandle;   // wifi_send_task 的任务句柄
 
 const unsigned char *texts[11][4] = {
@@ -31,6 +31,13 @@ const unsigned char *texts[11][4] = {
     {Hzk4[22], Hzk4[23]                    },//杭州
     {Hzk4[24], Hzk4[25]                    },//上海
     {Hzk4[26], Hzk4[27],                   }//深圳
+};
+
+const unsigned char *areas[4][4] = {
+    {Hzk4[22], Hzk4[23]                    },//杭州
+    {Hzk4[24], Hzk4[25]                    },//上海
+    {Hzk4[26], Hzk4[27],                   },//深圳
+    {0}
 };
 
 const menu_item_t alarm_menu[] = {
@@ -214,6 +221,10 @@ void main_window_render(void)
 
     OLED_ShowChinese(0, 33, Hzk3[0]);//星期
     OLED_ShowChinese(15, 33, week_name[calendar.week]);
+    if(send_data.area_index < 3) {
+        OLED_ShowChinese(30, 33, areas[send_data.area_index-1][0]);
+        OLED_ShowChinese(45, 33, areas[send_data.area_index-1][1]);
+    }
 
     OLED_ShowChinese(0 ,48, Hzk1[0]);//当
     OLED_ShowChinese(15,48, Hzk1[1]);//前

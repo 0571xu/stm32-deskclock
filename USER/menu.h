@@ -40,7 +40,7 @@ typedef struct
     uint8_t area_temperature_high; //地区最高温度
     uint8_t area_temperature_low; //地区最低温度
     uint8_t area_humidity; //地区湿度
-    uint8_t current_temp; //当前温度 
+    uint8_t current_temp; //当前温度
 }area_weather_t;
 
 extern area_weather_t area_weather_data; // 全局地区天气数据结构体

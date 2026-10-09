@@ -137,7 +137,7 @@ void wifi_send_task(void *pvParameters)
                 Data_pack(send_data);
                 uart1_send_bytes(send_buf, 10);
                 send_data.get_time = 0; // 发送后重置时间更新标志
-                send_data.area_index = 0; // 发送后重置地区索引
+                // send_data.area_index = 3; // 发送后重置地区索引
             }
             else if(notifyValue == 0x02)
             {
@@ -414,10 +414,10 @@ void connect_init(int status)
         if (i == 0)
         {
             uart1_send_at("ATE0");
-            while(wait_response("OK", 1500));
+            wait_response("OK", 1500);
 
             uart1_send_at("AT+UART=115200,8,1,0,1");
-            while(wait_response("OK", 1500));
+            while(!wait_response("OK", 1500));
 
             uart1_send_at("AT+CWMODE=1");
             while(wait_response("OK", 1500));
@@ -428,6 +428,7 @@ void connect_init(int status)
         {
             uart1_send_at("AT+CWJAP=\"TP-LINK_3372\",\"12345678\"");
             while(wait_response("OK", 5000));   // 连 WiFi 慢，超时给大点
+
             i++;
         }
 
@@ -449,4 +450,3 @@ void connect_init(int status)
     uart1_send_at("AT+CIPSEND");
     while(wait_response(">", 1500));
 }
-
